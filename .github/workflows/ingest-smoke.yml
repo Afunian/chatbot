@@ -30,12 +30,23 @@ jobs:
         run: |
           set -euo pipefail
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
-          # Try local resolver (ignore failures so fallbacks still run)
-          IP="$(getent ahostsv4 "$H" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+          
+          echo "Attempting to resolve IPv4 for $H..."
+          
+          # Method 1: Try dig with Google DNS
+          IP="$(dig +short A "$H" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
+          
+          # Method 2: Try nslookup with Google DNS
           if [ -z "${IP:-}" ]; then
-            IP="$(getent hosts "$H" 2>/dev/null | awk '/^[0-9]+\./{print $1; exit}' || true)"
+            IP="$(nslookup "$H" 8.8.8.8 2>/dev/null | awk '/^Address: / { print $2 }' | grep -E '^[0-9.]+$' | head -n1 || true)"
           fi
-          # DNS-over-HTTPS via Python (Cloudflare, then Google)
+          
+          # Method 3: Try getent
+          if [ -z "${IP:-}" ]; then
+            IP="$(getent ahostsv4 "$H" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+          fi
+          
+          # Method 4: DNS-over-HTTPS via Python (Cloudflare, then Google)
           if [ -z "${IP:-}" ]; then
             IP="$(
               python3 - "$H" <<'PY'
@@ -60,11 +71,25 @@ jobs:
           PY
             )" || true
           fi
+          
+          # Method 5: Try host command with Google DNS
           if [ -z "${IP:-}" ]; then
-            echo "ERROR: No IPv4 found for $H"
+            IP="$(host -t A "$H" 8.8.8.8 2>/dev/null | awk '/has address/ { print $4 }' | head -n1 || true)"
+          fi
+          
+          if [ -z "${IP:-}" ]; then
+            echo "ERROR: Could not resolve IPv4 address for $H using any method"
+            echo "This may mean the host only has IPv6 (AAAA) records."
+            echo "Attempting to find IPv6 address as fallback..."
+            IP6="$(dig +short AAAA "$H" @8.8.8.8 | head -n1 || true)"
+            if [ -n "${IP6:-}" ]; then
+              echo "Found IPv6: $IP6"
+              echo "Will proceed without IPv4 override - connection may fail"
+            fi
             exit 1
           fi
-          echo "Resolved $H -> $IP"
+          
+          echo "Successfully resolved $H -> $IP"
           
           # Add to /etc/hosts to force IPv4 resolution
           echo "$IP $H" | sudo tee -a /etc/hosts
@@ -78,30 +103,4 @@ jobs:
         run: |
           sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
           sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
-          sudo sysctl -w net.ipv6.conf.lo.disable_ipv6=1
-      - name: Show resolved env
-        shell: bash
-        run: |
-          echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
-          echo "PG_HOST_OVERRIDE=${PG_HOST_OVERRIDE:-<none>}"
-          echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
-          echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
-          echo ""
-          echo "/etc/hosts content:"
-          cat /etc/hosts | grep supabase || echo "No supabase entry found"
-          echo ""
-          echo "Testing DNS resolution:"
-          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co
-      # ------------------------------
-      # Block C – Install & check DB
-      # ------------------------------
-      - name: Install dependencies
-        run: npm ci
-      - name: db:status
-        working-directory: packages/ingest
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-          NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
-          SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
-          NODE_OPTIONS: "--dns-result-order=ipv4first"
-        run: npm run db:status
+          sudo sysctl -w net.ipv
