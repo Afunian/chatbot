@@ -129,17 +129,26 @@ async function pickEventValue() {
   await insertChunk("hello world");
   await insertChunk("lorem ipsum");
 
-  // ---------- 3) Add a source_event (respect CHECK constraint) ----------
+  // ---------- 3) Add a source_event (respect CHECK + idempotent) ----------
   const eCols = await describe("source_events");
-  const ef = [], ev = [], ep = []; let k = 1;
+  const eventValue = await pickEventValue();
 
-  if (has(eCols, "source_id"))  { ef.push("source_id");  ev.push(`$${k++}`); ep.push(sourceId); }
-  if (has(eCols, "event"))      { ef.push("event");      ev.push(`$${k++}`); ep.push(await pickEventValue()); }
-  if (has(eCols, "created_at")) { ef.push("created_at"); ev.push("now()"); }
-  if (has(eCols, "updated_at")) { ef.push("updated_at"); ev.push("now()"); }
+  if (has(eCols, "source_id") && has(eCols, "event")) {
+    const fields = ["source_id", "event"];
+    const values = ["$1", "$2"];
+    const params = [sourceId, eventValue];
 
-  if (ef.length > 0) {
-    await db.query(`INSERT INTO public.source_events(${ef.join(",")}) VALUES(${ev.join(",")})`, ep);
+    if (has(eCols, "created_at")) { fields.push("created_at"); values.push("now()"); }
+    if (has(eCols, "updated_at")) { fields.push("updated_at"); values.push("now()"); }
+
+    await db.query(
+      `INSERT INTO public.source_events(${fields.join(",")})
+       SELECT ${values.join(",")}
+       WHERE NOT EXISTS (
+         SELECT 1 FROM public.source_events WHERE source_id = $1 AND event = $2
+       )`,
+      params
+    );
   }
 
   // ---------- 4) Report ----------
