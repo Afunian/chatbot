@@ -20,9 +20,15 @@ jobs:
           cache-dependency-path: packages/ingest/package-lock.json
       - run: npm ci
       - name: Write CA file
+      - name: Preflight (mask DSN, verify CA)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          New-Item -ItemType Directory -Force -Path C:\certs | Out-Null
-          Set-Content C:\certs\supabase-root-2021.pem "${{ secrets.SSL_CA_PEM }}"
+          if (!(Test-Path C:\certs\supabase-root-2021.pem)) { throw "CA file missing" }
+          Write-Host "CA first line:"; Get-Content C:\certs\supabase-root-2021.pem -TotalCount 1
+          Write-Host "CA last line:";  Get-Content C:\certs\supabase-root-2021.pem -Tail 1
+          node -e "const u=process.env.SUPABASE_DB_URL||''; console.log('DSN:', u.replace(/:\/\/([^:]+):([^@]+)@/,'://$1:***@'))"
+
       - name: db:seed
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
