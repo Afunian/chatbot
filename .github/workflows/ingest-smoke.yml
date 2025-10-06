@@ -23,84 +23,47 @@ jobs:
             echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
           } >> "$GITHUB_ENV"
       # ------------------------------
-      # Block B – Force IPv4 resolver
+      # Block B – Configure IPv6
       # ------------------------------
-      - name: Force IPv4 for Supabase DB
+      - name: Configure IPv6 for Supabase DB
         shell: bash
         run: |
           set -euo pipefail
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
           
-          echo "Attempting to resolve IPv4 for $H..."
+          echo "Checking available IP addresses for $H..."
           
-          # Method 1: Try dig with Google DNS
-          IP="$(dig +short A "$H" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
+          # Check for IPv4
+          IP4="$(dig +short A "$H" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
           
-          # Method 2: Try nslookup with Google DNS
-          if [ -z "${IP:-}" ]; then
-            IP="$(nslookup "$H" 8.8.8.8 2>/dev/null | awk '/^Address: / { print $2 }' | grep -E '^[0-9.]+$' | head -n1 || true)"
-          fi
+          # Check for IPv6
+          IP6="$(dig +short AAAA "$H" @8.8.8.8 | grep -E '^[0-9a-f:]+$' | head -n1 || true)"
           
-          # Method 3: Try getent
-          if [ -z "${IP:-}" ]; then
-            IP="$(getent ahostsv4 "$H" 2>/dev/null | awk 'NR==1{print $1}' || true)"
-          fi
+          echo "IPv4: ${IP4:-not found}"
+          echo "IPv6: ${IP6:-not found}"
           
-          # Method 4: DNS-over-HTTPS via Python (Cloudflare, then Google)
-          if [ -z "${IP:-}" ]; then
-            IP="$(
-              python3 - "$H" <<'PY'
-          import json, sys, urllib.request as u, urllib.parse as p
-          q = sys.argv[1]
-          providers = [
-              ("https://cloudflare-dns.com/dns-query", {"accept": "application/dns-json"}),
-              ("https://dns.google/resolve", None),
-          ]
-          for base, hdrs in providers:
-              try:
-                  url = base + "?" + p.urlencode({"name": q, "type": "A"})
-                  req = u.Request(url, headers=hdrs) if hdrs else url
-                  data = json.load(u.urlopen(req))
-                  for ans in data.get("Answer", []):
-                      if ans.get("type") == 1 and ans.get("data"):
-                          print(ans["data"])
-                          sys.exit(0)
-              except Exception:
-                  pass
-          sys.exit(1)
-          PY
-            )" || true
-          fi
-          
-          # Method 5: Try host command with Google DNS
-          if [ -z "${IP:-}" ]; then
-            IP="$(host -t A "$H" 8.8.8.8 2>/dev/null | awk '/has address/ { print $4 }' | head -n1 || true)"
-          fi
-          
-          if [ -z "${IP:-}" ]; then
-            echo "ERROR: Could not resolve IPv4 address for $H using any method"
-            echo "This may mean the host only has IPv6 (AAAA) records."
-            echo "Attempting to find IPv6 address as fallback..."
-            IP6="$(dig +short AAAA "$H" @8.8.8.8 | head -n1 || true)"
-            if [ -n "${IP6:-}" ]; then
-              echo "Found IPv6: $IP6"
-              echo "Will proceed without IPv4 override - connection may fail"
-            fi
+          if [ -n "${IP4:-}" ]; then
+            echo "Using IPv4: $IP4"
+            echo "$IP4 $H" | sudo tee -a /etc/hosts
+            echo "PG_HOST=$IP4" >> "$GITHUB_ENV"
+          elif [ -n "${IP6:-}" ]; then
+            echo "No IPv4 available, using IPv6: $IP6"
+            echo "$IP6 $H" | sudo tee -a /etc/hosts
+            echo "PG_HOST=$IP6" >> "$GITHUB_ENV"
+            # Enable IPv6 (it should be enabled by default, but let's make sure)
+            sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+            sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
+          else
+            echo "ERROR: Could not resolve any IP address for $H"
             exit 1
           fi
           
-          echo "Successfully resolved $H -> $IP"
-          
-          # Add to /etc/hosts to force IPv4 resolution
-          echo "$IP $H" | sudo tee -a /etc/hosts
-          
-          {
-            echo "PG_SNI_HOST=$H"
-            echo "PG_HOST_OVERRIDE=$IP"
-          } >> "$GITHUB_ENV"
-      - name: Disable IPv6
+          echo "PG_SNI_HOST=$H" >> "$GITHUB_ENV"
+      - name: Show resolved env
         shell: bash
         run: |
-          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
-          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
-          sudo sysctl -w net.ipv
+          echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
+          echo "PG_HOST=${PG_HOST:-<none>}"
+          echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
+          echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
+          ech
