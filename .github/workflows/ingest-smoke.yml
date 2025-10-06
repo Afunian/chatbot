@@ -26,23 +26,26 @@ jobs:
         run: |
           nslookup db.yunfbzwdftdnclmdcjhh.supabase.co || true
           getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || true
+          
       - name: Force IPv4 for Supabase DB
         shell: bash
         run: |
           set -euo pipefail
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
-      
-          # Try getent (IPv4)
-          IP="$(getent ahostsv4 "$H" | awk 'NR==1 {print $1}')"
+
+          IP=""
+
+          # Try ahostsv4 (ignore failure so we can try fallbacks)
+          IP="$(getent ahostsv4 "$H" 2>/dev/null | awk 'NR==1 {print $1}' || true)"
 
           # Fallback: getent hosts (filter IPv4 only)
           if [ -z "${IP:-}" ]; then
-            IP="$(getent hosts "$H" | awk '/^[0-9]+\./ {print $1; exit}')"
+            IP="$(getent hosts "$H" 2>/dev/null | grep -m1 -E '^[0-9]+\.' | awk '{print $1}' || true)"
           fi
 
-          # Fallback: dig (if available)
+          # Fallback: dig (if present)
           if [ -z "${IP:-}" ] && command -v dig >/dev/null 2>&1; then
-            IP="$(dig +short A "$H" | head -n1)"
+            IP="$(dig +short A "$H" | head -n1 || true)"
           fi
 
           if [ -z "${IP:-}" ]; then
@@ -51,7 +54,7 @@ jobs:
           fi
 
           echo "Resolved $H -> $IP"
-          {
+         {
             echo "PG_SNI_HOST=$H"
             echo "PG_HOST_OVERRIDE=$IP"
           } >> "$GITHUB_ENV"
