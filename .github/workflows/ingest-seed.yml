@@ -24,9 +24,12 @@ jobs:
         run: |
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
           IP="$(getent ahostsv4 "$H" | awk '{print $1; exit}')"
+          if [ -z "$IP" ]; then IP="$(getent hosts "$H" | awk '{print $1; exit}')"; fi
+          if [ -z "$IP" ]; then IP="$(dig +short A "$H" | head -n1)"; fi
+          if [ -z "$IP" ]; then echo "No IPv4 found for $H"; exit 1; fi
           echo "Resolved $H -> $IP"
           echo "PG_SNI_HOST=$H" >> $GITHUB_ENV
-          echo "SUPABASE_DB_URL=${SUPABASE_DB_URL/$H/$IP}" >> $GITHUB_ENV
+          echo "PG_HOST_OVERRIDE=$IP" >> $GITHUB_ENV
       - run: npm ci
       - name: db:seed
         run: npm run db:seed
