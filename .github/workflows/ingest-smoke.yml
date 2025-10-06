@@ -1,64 +1,20 @@
-name: Ingest Smoke (DB status)
-on: { workflow_dispatch: {} }
+name: smoke
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: packages/ingest } }
-    env:
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-      SSL_CA_PEM: ${{ secrets.SSL_CA_PEM }}
-
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: '22.x' }
-        
-      - name: Show resolved env
-        shell: bash
-        run: |
-          echo "PG_SNI_HOST=$PG_SNI_HOST"
-          echo "PG_HOST_OVERRIDE=$PG_HOST_OVERRIDE"
-          echo "NODE_EXTRA_CA_CERTS=$NODE_EXTRA_CA_CERTS"
-          echo "SSL_CA_PEM_PATH=$SSL_CA_PEM_PATH"
-          
-      - name: DNS check
-        run: |
-          nslookup db.yunfbzwdftdnclmdcjhh.supabase.co || true
-          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || true
-          
-      - name: Force IPv4 for Supabase DB
-        shell: bash
-        run: |
-          set -euo pipefail
-          H="db.yunfbzwdftdnclmdcjhh.supabase.co"
+        with:
+          node-version: '22'
 
-          IP=""
-
-          # Try ahostsv4 (ignore failure so we can try fallbacks)
-          IP="$(getent ahostsv4 "$H" 2>/dev/null | awk 'NR==1 {print $1}' || true)"
-
-          # Fallback: getent hosts (filter IPv4 only)
-          if [ -z "${IP:-}" ]; then
-            IP="$(getent hosts "$H" 2>/dev/null | grep -m1 -E '^[0-9]+\.' | awk '{print $1}' || true)"
-          fi
-
-          # Fallback: dig (if present)
-          if [ -z "${IP:-}" ] && command -v dig >/dev/null 2>&1; then
-            IP="$(dig +short A "$H" | head -n1 || true)"
-          fi
-
-          if [ -z "${IP:-}" ]; then
-            echo "No IPv4 found for $H" >&2
-            exit 1
-          fi
-
-          echo "Resolved $H -> $IP"
-               {
-            echo "PG_SNI_HOST=$H"
-            echo "PG_HOST_OVERRIDE=$IP"
-          } >> "$GITHUB_ENV"
-
+      # Write the CA and export Node trust variables
       - name: Write CA file
         shell: bash
         run: |
@@ -69,7 +25,67 @@ jobs:
             echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem"
             echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
           } >> "$GITHUB_ENV"
-          
-      - run: npm ci
+
+      # Resolve an IPv4 for the DB and export PG_HOST_OVERRIDE + PG_SNI_HOST
+      - name: Force IPv4 for Supabase DB
+        shell: bash
+        run: |
+          set -euo pipefail
+          H="db.yunfbzwdftdnclmdcjhh.supabase.co"
+
+          # Try local resolver (ignore failures so fallbacks still run)
+          IP="$(getent ahostsv4 "$H" 2>/dev/null | awk 'NR==1{print $1}' || true)"
+          if [ -z "${IP:-}" ]; then
+            IP="$(getent hosts "$H" 2>/dev/null | awk '/^[0-9]+\./{print $1; exit}' || true)"
+          fi
+
+          # DNS-over-HTTPS via Python (Cloudflare, then Google)
+          if [ -z "${IP:-}" ]; then
+            IP="$(
+              python3 - "$H" <<'PY' || true
+import json, sys, urllib.request as u, urllib.parse as p
+q=sys.argv[1]
+providers=[
+  ("https://cloudflare-dns.com/dns-query", {"accept":"application/dns-json"}),
+  ("https://dns.google/resolve",          None),
+]
+for base, hdrs in providers:
+    try:
+        url = base + "?" + p.urlencode({"name": q, "type": "A"})
+        req = u.Request(url, headers=hdrs) if hdrs else url
+        data = json.load(u.urlopen(req))
+        for ans in data.get("Answer", []):
+            if ans.get("type")==1 and ans.get("data"):
+                print(ans["data"]); sys.exit(0)
+    except Exception:
+        pass
+sys.exit(1)
+PY
+            )"
+          fi
+
+          if [ -z "${IP:-}" ]; then
+            echo "No IPv4 found for $H (only AAAA visible). Proceeding without override."
+            exit 0
+          fi
+
+          echo "Resolved $H -> $IP"
+          {
+            echo "PG_SNI_HOST=$H"
+            echo "PG_HOST_OVERRIDE=$IP"
+          } >> "$GITHUB_ENV"
+
+      - name: Show resolved env
+        shell: bash
+        run: |
+          echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
+          echo "PG_HOST_OVERRIDE=${PG_HOST_OVERRIDE:-<none>}"
+          echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
+          echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
+
+      - name: Install deps
+        run: npm ci
+
       - name: db:status
+        working-directory: packages/ingest
         run: npm run db:status
