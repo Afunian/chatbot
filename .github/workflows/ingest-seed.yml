@@ -20,6 +20,13 @@ jobs:
           printf "%s" "$SSL_CA_PEM" > /tmp/certs/supabase-root-2021.pem
           echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem" >> $GITHUB_ENV
           echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem" >> $GITHUB_ENV
+      - name: Force IPv4 for Supabase DB
+        run: |
+          H="db.yunfbzwdftdnclmdcjhh.supabase.co"
+          IP="$(getent ahostsv4 "$H" | awk '{print $1; exit}')"
+          echo "Resolved $H -> $IP"
+          echo "PG_SNI_HOST=$H" >> $GITHUB_ENV
+          echo "SUPABASE_DB_URL=${SUPABASE_DB_URL/$H/$IP}" >> $GITHUB_ENV
       - run: npm ci
       - name: db:seed
         run: npm run db:seed
