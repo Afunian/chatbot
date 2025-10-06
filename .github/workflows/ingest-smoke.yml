@@ -1,35 +1,31 @@
 name: Ingest Smoke (DB status)
-
-on:
-  workflow_dispatch:
+on: { workflow_dispatch: {} }
 
 jobs:
   smoke:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: packages/ingest } }
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      SSL_CA_PEM: ${{ secrets.SSL_CA_PEM }}
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.x
-          cache: npm
-          cache-dependency-path: packages/ingest/package-lock.json
-
-      - name: Install deps
-        working-directory: packages/ingest
-        run: npm ci
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22.x' }
 
       - name: Write CA file
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path C:\certs | Out-Null
-          Set-Content -Path C:\certs\supabase-root-2021.pem -Value "${{ secrets.SSL_CA_PEM }}"
+          mkdir -p /tmp/certs
+          printf "%s" "$SSL_CA_PEM" > /tmp/certs/supabase-root-2021.pem
+          echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem" >> $GITHUB_ENV
+          echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem" >> $GITHUB_ENV
 
+      - name: DNS check
+        run: |
+          nslookup db.yunfbzwdftdnclmdcjhh.supabase.co || true
+          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || true
+
+      - run: npm ci
       - name: db:status
-        working-directory: packages/ingest
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-          SSL_CA_PEM_PATH: C:\certs\supabase-root-2021.pem
         run: npm run db:status
