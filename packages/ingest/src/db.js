@@ -23,6 +23,10 @@ const caPath = candidates.find(p => {
 });
 
 if (!process.env.SUPABASE_DB_URL) {
+  // Keep the real host for TLS SNI so cert verification still matches
+  const dsn = process.env.SUPABASE_DB_URL;
+  const urlObj = new URL(dsn);
+  const sniHost = process.env.PG_SNI_HOST || urlObj.hostname;
   console.error("❌ SUPABASE_DB_URL is not set. Put it in C:\\dentistrygpt\\.env");
   process.exit(1);
 }
@@ -36,10 +40,11 @@ const caPem = fs.readFileSync(caPath, "utf8");
 console.log(`[db] Using CA: ${caPath}`);
 
 export const db = new pg.Pool({
-  connectionString: process.env.SUPABASE_DB_URL,
+  connectionString: dsn,
   ssl: {
     ca: caPem,
     rejectUnauthorized: true,
+    servername: sniHost,   // <-- important
   },
 });
 
