@@ -25,7 +25,13 @@ jobs:
         run: |
           nslookup db.yunfbzwdftdnclmdcjhh.supabase.co || true
           getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || true
-
+      - name: Force IPv4 for Supabase DB
+        run: |
+            H="db.yunfbzwdftdnclmdcjhh.supabase.co"
+            IP="$(getent ahostsv4 "$H" | awk '{print $1; exit}')"
+            echo "Resolved $H -> $IP"
+            echo "PG_SNI_HOST=$H" >> $GITHUB_ENV
+            echo "SUPABASE_DB_URL=${SUPABASE_DB_URL/$H/$IP}" >> $GITHUB_ENV
       - run: npm ci
       - name: db:status
         run: npm run db:status
