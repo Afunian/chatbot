@@ -8,3 +8,18 @@ jobs:
     steps:
       - name: Hello
         run: echo "smoke workflow parsed OK"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+          with:
+            node-version: '22'
+
+      - name: Write CA file
+          shell: bash
+          run: |
+            set -euo pipefail
+            mkdir -p /tmp/certs
+            echo "${{ secrets.SSL_CA_PEM }}" > /tmp/certs/supabase-root-2021.pem
+            {
+              echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem"
+              echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
+            } >> "$GITHUB_ENV"
