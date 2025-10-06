@@ -1,17 +1,14 @@
 name: smoke
 on:
   workflow_dispatch:
-
 jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
       # ------------------------------
       # Block A – Node + CA setup
       # ------------------------------
@@ -25,7 +22,6 @@ jobs:
             echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem"
             echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
           } >> "$GITHUB_ENV"
-
       # ------------------------------
       # Block B – Force IPv4 resolver
       # ------------------------------
@@ -35,50 +31,45 @@ jobs:
         run: |
           set -euo pipefail
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
-
           # Try local resolver (ignore failures so fallbacks still run)
           IP="$(getent ahostsv4 "$H" 2>/dev/null | awk 'NR==1{print $1}' || true)"
           if [ -z "${IP:-}" ]; then
             IP="$(getent hosts "$H" 2>/dev/null | awk '/^[0-9]+\./{print $1; exit}' || true)"
           fi
-
           # DNS-over-HTTPS via Python (Cloudflare, then Google)
           if [ -z "${IP:-}" ]; then
             IP="$(
-python3 - "$H" <<'PY'
-import json, sys, urllib.request as u, urllib.parse as p
-q = sys.argv[1]
-providers = [
-    ("https://cloudflare-dns.com/dns-query", {"accept": "application/dns-json"}),
-    ("https://dns.google/resolve", None),
-]
-for base, hdrs in providers:
-    try:
-        url = base + "?" + p.urlencode({"name": q, "type": "A"})
-        req = u.Request(url, headers=hdrs) if hdrs else url
-        data = json.load(u.urlopen(req))
-        for ans in data.get("Answer", []):
-            if ans.get("type") == 1 and ans.get("data"):
-                print(ans["data"])
-                sys.exit(0)
-    except Exception:
-        pass
-sys.exit(1)
-PY
+              python3 - "$H" <<'PY'
+          import json, sys, urllib.request as u, urllib.parse as p
+          q = sys.argv[1]
+          providers = [
+              ("https://cloudflare-dns.com/dns-query", {"accept": "application/dns-json"}),
+              ("https://dns.google/resolve", None),
+          ]
+          for base, hdrs in providers:
+              try:
+                  url = base + "?" + p.urlencode({"name": q, "type": "A"})
+                  req = u.Request(url, headers=hdrs) if hdrs else url
+                  data = json.load(u.urlopen(req))
+                  for ans in data.get("Answer", []):
+                      if ans.get("type") == 1 and ans.get("data"):
+                          print(ans["data"])
+                          sys.exit(0)
+              except Exception:
+                  pass
+          sys.exit(1)
+          PY
             )" || true
           fi
-
           if [ -z "${IP:-}" ]; then
             echo "No IPv4 found for $H (only AAAA visible). Proceeding without override."
             exit 0
           fi
-
           echo "Resolved $H -> $IP"
           {
             echo "PG_SNI_HOST=$H"
             echo "PG_HOST_OVERRIDE=$IP"
           } >> "$GITHUB_ENV"
-
       - name: Show resolved env
         shell: bash
         run: |
