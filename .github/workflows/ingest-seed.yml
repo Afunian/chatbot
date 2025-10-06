@@ -27,24 +27,39 @@ jobs:
           set -euo pipefail
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
 
-          IP=""
-
-          # Try ahostsv4 (ignore failure so we can try fallbacks)
+          # 1) Try local resolver quickly (ignore failures)
           IP="$(getent ahostsv4 "$H" 2>/dev/null | awk 'NR==1 {print $1}' || true)"
-
-          # Fallback: getent hosts (filter IPv4 only)
           if [ -z "${IP:-}" ]; then
             IP="$(getent hosts "$H" 2>/dev/null | grep -m1 -E '^[0-9]+\.' | awk '{print $1}' || true)"
           fi
 
-          # Fallback: dig (if present)
-          if [ -z "${IP:-}" ] && command -v dig >/dev/null 2>&1; then
-            IP="$(dig +short A "$H" | head -n1 || true)"
+          # 2) DNS-over-HTTPS (Cloudflare then Google) via Python stdlib (no jq/dig needed)
+          if [ -z "${IP:-}" ]; then
+            py='import json,sys,urllib.request as u,urllib.parse as p;
+      Q=sys.argv[1]; URL="https://cloudflare-dns.com/dns-query?"+p.urlencode({"name":Q,"type":"A"});
+      try:
+        r=u.Request(URL,headers={"accept":"application/dns-json"}); d=json.load(u.urlopen(r))
+        a=[x["data"] for x in d.get("Answer",[]) if x.get("type")==1]
+        print(a[0]) if a else sys.exit(1)
+      except Exception: sys.exit(1)'
+            IP="$(python3 -c "$py" "$H" || true)"
           fi
 
           if [ -z "${IP:-}" ]; then
-            echo "No IPv4 found for $H" >&2
-            exit 1
+            py='import json,sys,urllib.request as u,urllib.parse as p;
+      Q=sys.argv[1]; URL="https://dns.google/resolve?"+p.urlencode({"name":Q,"type":"A"});
+      try:
+        d=json.load(u.urlopen(URL))
+        a=[x["data"] for x in d.get("Answer",[]) if x.get("type")==1]
+        print(a[0]) if a else sys.exit(1)
+      except Exception: sys.exit(1)'
+            IP="$(python3 -c "$py" "$H" || true)"
+          fi
+
+          if [ -z "${IP:-}" ]; then
+            echo "No IPv4 found for $H (only AAAA visible). Proceeding without override."
+            # Do NOT hard-fail here; let the Node step run so we can see the exact pg error.
+            exit 0
           fi
 
           echo "Resolved $H -> $IP"
@@ -53,7 +68,6 @@ jobs:
             echo "PG_HOST_OVERRIDE=$IP"
           } >> "$GITHUB_ENV"
 
-          } >> "$GITHUB_ENV"
       - name: Write CA file
         shell: bash
         run: |
