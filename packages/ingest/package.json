@@ -1,0 +1,30 @@
+{
+  "name": "@dentistrygpt/ingest",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p ./tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "dotenv -e ../../.env -- tsx ./src/index.ts",
+    "migrate": "node ./src/migrate.mjs",
+    "print-dburl": "dotenv -e ../../.env -- powershell -NoProfile -Command \"$u=$env:SUPABASE_DB_URL; if(-not $u){Write-Error 'SUPABASE_DB_URL is empty'; exit 1}; $masked=$u -replace '//([^:]+):([^@]+)@','//$1:***@'; Write-Host $masked\""
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.6.1",
+    "got": "^14.2.1",
+    "html-to-text": "^9.0.5",
+    "openai": "^4.104.0",
+    "p-queue": "^7.4.1",
+    "pg": "^8.16.3",
+    "robots-parser": "^3.0.1",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "dotenv-cli": "^10.0.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "win-ca": "^3.5.1"
+  }
+}

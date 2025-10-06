@@ -1,0 +1,31 @@
+- domain: "www.bcdental.org"
+  allowed_paths: ["/public-education/"]
+  disallowed_paths: ["/login", "/members"]
+  pdf_allowed: true
+  max_depth: 2
+  frequency: "monthly"
+  publisher: "BC Dental Association"
+
+- domain: "www.bccohp.ca"
+  allowed_paths: ["/public/"]
+  disallowed_paths: []
+  pdf_allowed: true
+  max_depth: 2
+  frequency: "monthly"
+  publisher: "BCCOHP"
+
+- domain: "www.cda-adc.ca"
+  allowed_paths: ["/en/oral_health/"]
+  disallowed_paths: []
+  pdf_allowed: true
+  max_depth: 2
+  frequency: "monthly"
+  publisher: "Canadian Dental Association"
+
+- domain: "www.canada.ca"
+  allowed_paths: ["/en/health-canada/"]
+  disallowed_paths: []
+  pdf_allowed: true
+  max_depth: 2
+  frequency: "monthly"
+  publisher: "Health Canada"
