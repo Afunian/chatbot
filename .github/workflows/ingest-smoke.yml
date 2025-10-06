@@ -23,9 +23,23 @@ jobs:
             echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
           } >> "$GITHUB_ENV"
       # ------------------------------
-      # Block B – Configure IPv6
+      # Block B – Test IPv6 connectivity
       # ------------------------------
-      - name: Configure IPv6 for Supabase DB
+      - name: Test IPv6 connectivity
+        shell: bash
+        run: |
+          echo "Testing IPv6 connectivity..."
+          ping6 -c 2 google.com || echo "IPv6 not available on this runner"
+          echo ""
+          echo "Available network interfaces:"
+          ip addr show
+          echo ""
+          echo "IPv6 routing table:"
+          ip -6 route show || echo "No IPv6 routes"
+      # ------------------------------
+      # Block C – Configure IPv4/IPv6 (Modified)
+      # ------------------------------
+      - name: Configure IPv4/IPv6 for Supabase DB
         shell: bash
         run: |
           set -euo pipefail
@@ -33,7 +47,7 @@ jobs:
           
           echo "Checking available IP addresses for $H..."
           
-          # Check for IPv4
+          # Check for IPv4 first and prefer it
           IP4="$(dig +short A "$H" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
           
           # Check for IPv6
@@ -42,41 +56,84 @@ jobs:
           echo "IPv4: ${IP4:-not found}"
           echo "IPv6: ${IP6:-not found}"
           
+          # Always prefer IPv4 if available to avoid IPv6 connectivity issues
           if [ -n "${IP4:-}" ]; then
             echo "Using IPv4: $IP4"
             echo "$IP4 $H" | sudo tee -a /etc/hosts
             echo "PG_HOST=$IP4" >> "$GITHUB_ENV"
+            echo "IP_VERSION=4" >> "$GITHUB_ENV"
           elif [ -n "${IP6:-}" ]; then
-            echo "No IPv4 available, using IPv6: $IP6"
-            echo "$IP6 $H" | sudo tee -a /etc/hosts
-            echo "PG_HOST=$IP6" >> "$GITHUB_ENV"
-            # Ensure IPv6 is enabled
-            sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
-            sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
+            echo "No IPv4 available, attempting IPv6: $IP6"
+            # Test IPv6 connectivity before proceeding
+            if ping6 -c 1 -W 5 "$IP6" >/dev/null 2>&1; then
+              echo "IPv6 connectivity test successful"
+              echo "$IP6 $H" | sudo tee -a /etc/hosts
+              echo "PG_HOST=$IP6" >> "$GITHUB_ENV"
+              echo "IP_VERSION=6" >> "$GITHUB_ENV"
+              # Enable IPv6 (it should be enabled by default, but let's make sure)
+              sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
+              sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
+            else
+              echo "ERROR: IPv6 connectivity test failed for $IP6"
+              echo "GitHub Actions runner may not support IPv6 connectivity"
+              exit 1
+            fi
           else
             echo "ERROR: Could not resolve any IP address for $H"
             exit 1
           fi
           
           echo "PG_SNI_HOST=$H" >> "$GITHUB_ENV"
-      #- name: Show resolved env
-      #  shell: bash
-      #  run: |
-       #   echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
-       #   echo "PG_HOST=${PG_HOST:-<none>}"
-       #   echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
-       #   echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
-        #  echo ""
-       #   echo "/etc/hosts content:"
-       #   cat /etc/hosts | grep supabase || echo "No supabase entry found"
-        #  echo ""
-        #  echo "Testing DNS resolution:"
-        #  getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || echo "getent failed"
-       #   echo ""
-        #  echo "IPv6 status:"
-        #  cat /proc/sys/net/ipv6/conf/all/disable_ipv6
       # ------------------------------
-      # Block C – Install & check DB
+      # Block D – Connection verification
+      # ------------------------------
+      - name: Verify database connectivity
+        shell: bash
+        run: |
+          echo "=== Connection Verification ==="
+          echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
+          echo "PG_HOST=${PG_HOST:-<none>}"
+          echo "IP_VERSION=${IP_VERSION:-<none>}"
+          echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
+          echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
+          echo ""
+          echo "/etc/hosts content:"
+          cat /etc/hosts | grep supabase || echo "No supabase entry found"
+          echo ""
+          echo "Testing DNS resolution:"
+          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || echo "getent failed"
+          echo ""
+          if [ "${IP_VERSION:-}" = "6" ]; then
+            echo "Testing IPv6 network connectivity:"
+            ping6 -c 2 db.yunfbzwdftdnclmdcjhh.supabase.co || echo "ping6 failed"
+          else
+            echo "Testing IPv4 network connectivity:"
+            ping -c 2 db.yunfbzwdftdnclmdcjhh.supabase.co || echo "ping failed"
+          fi
+          echo ""
+          echo "Testing port 5432 connectivity:"
+          timeout 10 bash -c "</dev/tcp/${PG_HOST}/5432" && echo "Port 5432 is reachable" || echo "Port 5432 is not reachable"
+      # ------------------------------
+      # Original Show resolved env (commented out as requested)
+      # ------------------------------
+      # - name: Show resolved env
+      #   shell: bash
+      #   run: |
+      #     echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
+      #     echo "PG_HOST=${PG_HOST:-<none>}"
+      #     echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
+      #     echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
+      #     echo ""
+      #     echo "/etc/hosts content:"
+      #     cat /etc/hosts | grep supabase || echo "No supabase entry found"
+      #     echo ""
+      #     echo "Testing DNS resolution:"
+      #     getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || echo "getent failed"
+      #     echo ""
+      #     echo "Testing network connectivity:"
+      #     ping6 -c 2 db.yunfbzwdftdnclmdcjhh.supabase.co || echo "ping6 failed"
+      # ------------------------------
+      # Block E – Install & check DB
       # ------------------------------
       - name: Install dependencies
         run: npm ci
