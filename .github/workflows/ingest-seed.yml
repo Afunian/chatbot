@@ -14,12 +14,6 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22.x' }
 
-      - name: Write CA file
-        run: |
-          mkdir -p /tmp/certs
-          printf "%s" "$SSL_CA_PEM" > /tmp/certs/supabase-root-2021.pem
-          echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem" >> $GITHUB_ENV
-          echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem" >> $GITHUB_ENV
       - name: Force IPv4 for Supabase DB
         shell: bash
         run: |
@@ -49,7 +43,17 @@ jobs:
             echo "PG_SNI_HOST=$H"
             echo "PG_HOST_OVERRIDE=$IP"
           } >> "$GITHUB_ENV"
-
+      - name: Write CA file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/certs
+          echo "${{ secrets.SSL_CA_PEM }}" > /tmp/certs/supabase-root-2021.pem
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem"
+            echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
+          } >> "$GITHUB_ENV"
+          
       - run: npm ci
       - name: db:seed
         run: npm run db:seed
