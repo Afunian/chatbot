@@ -21,6 +21,7 @@ jobs:
           echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem" >> $GITHUB_ENV
           echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem" >> $GITHUB_ENV
       - name: Force IPv4 for Supabase DB
+        shell: bash
         run: |
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
           IP="$(getent ahostsv4 "$H" | awk '{print $1; exit}')"
@@ -28,8 +29,8 @@ jobs:
           if [ -z "$IP" ]; then IP="$(dig +short A "$H" | head -n1)"; fi
           if [ -z "$IP" ]; then echo "No IPv4 found for $H"; exit 1; fi
           echo "Resolved $H -> $IP"
-          echo "PG_SNI_HOST=$H" >> $GITHUB_ENV
-          echo "PG_HOST_OVERRIDE=$IP" >> $GITHUB_ENV
+          echo "PG_SNI_HOST=$H" >> "$GITHUB_ENV"
+          echo "PG_HOST_OVERRIDE=$IP" >> "$GITHUB_ENV"
       - run: npm ci
       - name: db:seed
         run: npm run db:seed
