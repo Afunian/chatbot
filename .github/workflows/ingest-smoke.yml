@@ -45,12 +45,12 @@ jobs:
           # DNS-over-HTTPS via Python (Cloudflare, then Google)
           if [ -z "${IP:-}" ]; then
             IP="$(
-              python3 - "$H" <<'PY'
+python3 - "$H" <<'PY'
 import json, sys, urllib.request as u, urllib.parse as p
-q=sys.argv[1]
-providers=[
-  ("https://cloudflare-dns.com/dns-query", {"accept":"application/dns-json"}),
-  ("https://dns.google/resolve",          None),
+q = sys.argv[1]
+providers = [
+    ("https://cloudflare-dns.com/dns-query", {"accept": "application/dns-json"}),
+    ("https://dns.google/resolve", None),
 ]
 for base, hdrs in providers:
     try:
@@ -58,8 +58,9 @@ for base, hdrs in providers:
         req = u.Request(url, headers=hdrs) if hdrs else url
         data = json.load(u.urlopen(req))
         for ans in data.get("Answer", []):
-            if ans.get("type")==1 and ans.get("data"):
-                print(ans["data"]); sys.exit(0)
+            if ans.get("type") == 1 and ans.get("data"):
+                print(ans["data"])
+                sys.exit(0)
     except Exception:
         pass
 sys.exit(1)
