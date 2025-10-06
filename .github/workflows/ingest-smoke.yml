@@ -27,7 +27,6 @@ jobs:
       # ------------------------------
       - name: Force IPv4 for Supabase DB
         shell: bash
-        continue-on-error: true
         run: |
           set -euo pipefail
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
@@ -62,30 +61,24 @@ jobs:
             )" || true
           fi
           if [ -z "${IP:-}" ]; then
-            echo "No IPv4 found for $H (only AAAA visible). Proceeding without override."
-            exit 0
+            echo "ERROR: No IPv4 found for $H"
+            exit 1
           fi
           echo "Resolved $H -> $IP"
+          
+          # Add to /etc/hosts to force IPv4 resolution
+          echo "$IP $H" | sudo tee -a /etc/hosts
+          
           {
             echo "PG_SNI_HOST=$H"
             echo "PG_HOST_OVERRIDE=$IP"
           } >> "$GITHUB_ENV"
-      - name: Override DB URL with IPv4
+      - name: Disable IPv6
         shell: bash
         run: |
-          set -euo pipefail
-          ORIGINAL_URL="${{ secrets.SUPABASE_DB_URL }}"
-          
-          if [ -n "${PG_HOST_OVERRIDE:-}" ] && [ -n "${PG_SNI_HOST:-}" ]; then
-            echo "Replacing hostname in connection string with IPv4..."
-            # Replace the hostname with the IP address
-            MODIFIED_URL="${ORIGINAL_URL//$PG_SNI_HOST/$PG_HOST_OVERRIDE}"
-            echo "SUPABASE_DB_URL_FINAL=$MODIFIED_URL" >> "$GITHUB_ENV"
-            echo "Using modified connection string with IPv4"
-          else
-            echo "No IPv4 override available, using original URL"
-            echo "SUPABASE_DB_URL_FINAL=$ORIGINAL_URL" >> "$GITHUB_ENV"
-          fi
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1
+          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1
+          sudo sysctl -w net.ipv6.conf.lo.disable_ipv6=1
       - name: Show resolved env
         shell: bash
         run: |
@@ -93,6 +86,12 @@ jobs:
           echo "PG_HOST_OVERRIDE=${PG_HOST_OVERRIDE:-<none>}"
           echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
           echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
+          echo ""
+          echo "/etc/hosts content:"
+          cat /etc/hosts | grep supabase || echo "No supabase entry found"
+          echo ""
+          echo "Testing DNS resolution:"
+          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co
       # ------------------------------
       # Block C – Install & check DB
       # ------------------------------
@@ -101,7 +100,7 @@ jobs:
       - name: db:status
         working-directory: packages/ingest
         env:
-          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_FINAL }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
           SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
           NODE_OPTIONS: "--dns-result-order=ipv4first"
