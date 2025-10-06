@@ -54,7 +54,7 @@ jobs:
           fi
 
           echo "Resolved $H -> $IP"
-         {
+               {
             echo "PG_SNI_HOST=$H"
             echo "PG_HOST_OVERRIDE=$IP"
           } >> "$GITHUB_ENV"
