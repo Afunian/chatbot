@@ -1,0 +1,32 @@
+name: Ingest Smoke (DB status)
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+concurrency:
+  group: ingest-smoke-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  smoke:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: packages/ingest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: packages/ingest/package-lock.json
+      - run: npm ci
+      - name: Write CA file
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\certs | Out-Null
+          Set-Content C:\certs\supabase-root-2021.pem "${{ secrets.SSL_CA_PEM }}"
+      - name: db:status
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SSL_CA_PEM_PATH: C:\certs\supabase-root-2021.pem
+        run: npm run db:status
