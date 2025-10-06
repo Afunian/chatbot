@@ -1,40 +1,42 @@
 name: Ingest Seed (manual)
+
 on:
-  workflow_dispatch: {}
-concurrency:
-  group: ingest-seed-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_dispatch:
+
 jobs:
   seed:
     runs-on: windows-latest
-    defaults:
-      run:
-        shell: pwsh
-        working-directory: packages/ingest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: 22.x
+          cache: npm
           cache-dependency-path: packages/ingest/package-lock.json
-      - run: npm ci
+
+      - name: Install deps
+        working-directory: packages/ingest
+        run: npm ci
+
       - name: Write CA file
-      - name: Preflight (mask DSN, verify CA)
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        shell: pwsh
         run: |
-          if (!(Test-Path C:\certs\supabase-root-2021.pem)) { throw "CA file missing" }
-          Write-Host "CA first line:"; Get-Content C:\certs\supabase-root-2021.pem -TotalCount 1
-          Write-Host "CA last line:";  Get-Content C:\certs\supabase-root-2021.pem -Tail 1
-          node -e "const u=process.env.SUPABASE_DB_URL||''; console.log('DSN:', u.replace(/:\/\/([^:]+):([^@]+)@/,'://$1:***@'))"
+          New-Item -ItemType Directory -Force -Path C:\certs | Out-Null
+          Set-Content -Path C:\certs\supabase-root-2021.pem -Value "${{ secrets.SSL_CA_PEM }}"
+
       - name: db:seed
+        working-directory: packages/ingest
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SSL_CA_PEM_PATH: C:\certs\supabase-root-2021.pem
-        run: node ./src/seed-smart.mjs
+        run: npm run db:seed
+
       - name: db:status
+        working-directory: packages/ingest
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SSL_CA_PEM_PATH: C:\certs\supabase-root-2021.pem
-        run: node ./src/db-status.mjs
+        run: npm run db:status
