@@ -28,7 +28,6 @@ jobs:
           Write-Host "CA first line:"; Get-Content C:\certs\supabase-root-2021.pem -TotalCount 1
           Write-Host "CA last line:";  Get-Content C:\certs\supabase-root-2021.pem -Tail 1
           node -e "const u=process.env.SUPABASE_DB_URL||''; console.log('DSN:', u.replace(/:\/\/([^:]+):([^@]+)@/,'://$1:***@'))"
-
       - name: db:seed
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
