@@ -59,22 +59,22 @@ jobs:
           fi
           
           echo "PG_SNI_HOST=$H" >> "$GITHUB_ENV"
-      - name: Show resolved env
-        shell: bash
-        run: |
-          echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
-          echo "PG_HOST=${PG_HOST:-<none>}"
-          echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
-          echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
-          echo ""
-          echo "/etc/hosts content:"
-          cat /etc/hosts | grep supabase || echo "No supabase entry found"
-          echo ""
-          echo "Testing DNS resolution:"
-          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || echo "getent failed"
-          echo ""
-          echo "IPv6 status:"
-          cat /proc/sys/net/ipv6/conf/all/disable_ipv6
+      #- name: Show resolved env
+      #  shell: bash
+      #  run: |
+       #   echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
+       #   echo "PG_HOST=${PG_HOST:-<none>}"
+       #   echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
+       #   echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
+        #  echo ""
+       #   echo "/etc/hosts content:"
+       #   cat /etc/hosts | grep supabase || echo "No supabase entry found"
+        #  echo ""
+        #  echo "Testing DNS resolution:"
+        #  getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || echo "getent failed"
+       #   echo ""
+        #  echo "IPv6 status:"
+        #  cat /proc/sys/net/ipv6/conf/all/disable_ipv6
       # ------------------------------
       # Block C – Install & check DB
       # ------------------------------
