@@ -28,14 +28,33 @@ jobs:
       - name: Force IPv4 for Supabase DB
         shell: bash
         run: |
+          set -euo pipefail
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
-          IP="$(getent ahostsv4 "$H" | awk '{print $1; exit}')"
-          if [ -z "$IP" ]; then IP="$(getent hosts "$H" | awk '{print $1; exit}')"; fi
-          if [ -z "$IP" ]; then IP="$(dig +short A "$H" | head -n1)"; fi
-          if [ -z "$IP" ]; then echo "No IPv4 found for $H"; exit 1; fi
+      
+          # Try getent (IPv4)
+          IP="$(getent ahostsv4 "$H" | awk 'NR==1 {print $1}')"
+
+          # Fallback: getent hosts (filter IPv4 only)
+          if [ -z "${IP:-}" ]; then
+            IP="$(getent hosts "$H" | awk '/^[0-9]+\./ {print $1; exit}')"
+          fi
+
+          # Fallback: dig (if available)
+          if [ -z "${IP:-}" ] && command -v dig >/dev/null 2>&1; then
+            IP="$(dig +short A "$H" | head -n1)"
+          fi
+
+          if [ -z "${IP:-}" ]; then
+            echo "No IPv4 found for $H" >&2
+            exit 1
+          fi
+
           echo "Resolved $H -> $IP"
-          echo "PG_SNI_HOST=$H" >> "$GITHUB_ENV"
-          echo "PG_HOST_OVERRIDE=$IP" >> "$GITHUB_ENV"
+          {
+            echo "PG_SNI_HOST=$H"
+            echo "PG_HOST_OVERRIDE=$IP"
+          } >> "$GITHUB_ENV"
+
       - run: npm ci
       - name: db:status
         run: npm run db:status
