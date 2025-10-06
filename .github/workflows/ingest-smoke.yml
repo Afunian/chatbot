@@ -70,6 +70,22 @@ jobs:
             echo "PG_SNI_HOST=$H"
             echo "PG_HOST_OVERRIDE=$IP"
           } >> "$GITHUB_ENV"
+      - name: Override DB URL with IPv4
+        shell: bash
+        run: |
+          set -euo pipefail
+          ORIGINAL_URL="${{ secrets.SUPABASE_DB_URL }}"
+          
+          if [ -n "${PG_HOST_OVERRIDE:-}" ] && [ -n "${PG_SNI_HOST:-}" ]; then
+            echo "Replacing hostname in connection string with IPv4..."
+            # Replace the hostname with the IP address
+            MODIFIED_URL="${ORIGINAL_URL//$PG_SNI_HOST/$PG_HOST_OVERRIDE}"
+            echo "SUPABASE_DB_URL_FINAL=$MODIFIED_URL" >> "$GITHUB_ENV"
+            echo "Using modified connection string with IPv4"
+          else
+            echo "No IPv4 override available, using original URL"
+            echo "SUPABASE_DB_URL_FINAL=$ORIGINAL_URL" >> "$GITHUB_ENV"
+          fi
       - name: Show resolved env
         shell: bash
         run: |
@@ -85,9 +101,8 @@ jobs:
       - name: db:status
         working-directory: packages/ingest
         env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_FINAL }}
           NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
           SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
-          PG_SNI_HOST: ${{ env.PG_SNI_HOST }}
-          PG_HOST_OVERRIDE: ${{ env.PG_HOST_OVERRIDE }}
+          NODE_OPTIONS: "--dns-result-order=ipv4first"
         run: npm run db:status
