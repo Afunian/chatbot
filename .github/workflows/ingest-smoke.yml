@@ -23,124 +23,102 @@ jobs:
             echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
           } >> "$GITHUB_ENV"
       # ------------------------------
-      # Block B – Test IPv6 connectivity
+      # Block B – Setup IPv6 tunnel via socat
       # ------------------------------
-      - name: Test IPv6 connectivity
-        shell: bash
-        run: |
-          echo "Testing IPv6 connectivity..."
-          ping6 -c 2 google.com || echo "IPv6 not available on this runner"
-          echo ""
-          echo "Available network interfaces:"
-          ip addr show
-          echo ""
-          echo "IPv6 routing table:"
-          ip -6 route show || echo "No IPv6 routes"
-      # ------------------------------
-      # Block C – Configure IPv4/IPv6 (Modified)
-      # ------------------------------
-      - name: Configure IPv4/IPv6 for Supabase DB
+      - name: Install socat
+        run: sudo apt-get update && sudo apt-get install -y socat
+      
+      - name: Setup IPv6-to-IPv4 proxy
         shell: bash
         run: |
           set -euo pipefail
           H="db.yunfbzwdftdnclmdcjhh.supabase.co"
+          PORT="5432"
+          LOCAL_PORT="15432"
           
-          echo "Checking available IP addresses for $H..."
-          
-          # Check for IPv4 first and prefer it
-          IP4="$(dig +short A "$H" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
-          
-          # Check for IPv6
+          # Get IPv6 address
           IP6="$(dig +short AAAA "$H" @8.8.8.8 | grep -E '^[0-9a-f:]+$' | head -n1 || true)"
           
-          echo "IPv4: ${IP4:-not found}"
-          echo "IPv6: ${IP6:-not found}"
-          
-          # Always prefer IPv4 if available to avoid IPv6 connectivity issues
-          if [ -n "${IP4:-}" ]; then
-            echo "Using IPv4: $IP4"
-            echo "$IP4 $H" | sudo tee -a /etc/hosts
-            echo "PG_HOST=$IP4" >> "$GITHUB_ENV"
-            echo "IP_VERSION=4" >> "$GITHUB_ENV"
-          elif [ -n "${IP6:-}" ]; then
-            echo "No IPv4 available, attempting IPv6: $IP6"
-            # Test IPv6 connectivity before proceeding
-            if ping6 -c 1 -W 5 "$IP6" >/dev/null 2>&1; then
-              echo "IPv6 connectivity test successful"
-              echo "$IP6 $H" | sudo tee -a /etc/hosts
-              echo "PG_HOST=$IP6" >> "$GITHUB_ENV"
-              echo "IP_VERSION=6" >> "$GITHUB_ENV"
-              # Enable IPv6 (it should be enabled by default, but let's make sure)
-              sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
-              sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
-            else
-              echo "ERROR: IPv6 connectivity test failed for $IP6"
-              echo "GitHub Actions runner may not support IPv6 connectivity"
-              exit 1
-            fi
-          else
-            echo "ERROR: Could not resolve any IP address for $H"
+          if [ -z "${IP6:-}" ]; then
+            echo "ERROR: Could not resolve IPv6 address for $H"
             exit 1
           fi
           
-          echo "PG_SNI_HOST=$H" >> "$GITHUB_ENV"
-      # ------------------------------
-      # Block D – Connection verification
-      # ------------------------------
-      - name: Verify database connectivity
+          echo "Setting up socat proxy: 127.0.0.1:$LOCAL_PORT -> [$IP6]:$PORT"
+          
+          # Start socat in background
+          nohup socat TCP4-LISTEN:$LOCAL_PORT,reuseaddr,fork TCP6:[$IP6]:$PORT > /tmp/socat.log 2>&1 &
+          SOCAT_PID=$!
+          echo "SOCAT_PID=$SOCAT_PID" >> "$GITHUB_ENV"
+          
+          # Wait a moment for socat to start
+          sleep 2
+          
+          # Verify socat is running
+          if ! ps -p $SOCAT_PID > /dev/null; then
+            echo "ERROR: socat failed to start"
+            cat /tmp/socat.log
+            exit 1
+          fi
+          
+          echo "Socat proxy started successfully (PID: $SOCAT_PID)"
+          echo "PG_PROXY_HOST=127.0.0.1" >> "$GITHUB_ENV"
+          echo "PG_PROXY_PORT=$LOCAL_PORT" >> "$GITHUB_ENV"
+          echo "PG_ORIGINAL_HOST=$H" >> "$GITHUB_ENV"
+      
+      - name: Modify connection string for proxy
         shell: bash
         run: |
-          echo "=== Connection Verification ==="
-          echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
-          echo "PG_HOST=${PG_HOST:-<none>}"
-          echo "IP_VERSION=${IP_VERSION:-<none>}"
+          set -euo pipefail
+          ORIGINAL_URL="${{ secrets.SUPABASE_DB_URL }}"
+          
+          # Replace hostname and port with proxy
+          MODIFIED_URL="${ORIGINAL_URL//${PG_ORIGINAL_HOST}:5432/127.0.0.1:${PG_PROXY_PORT}}"
+          
+          # If no port was specified in original, add it
+          if [[ "$ORIGINAL_URL" != *":5432"* ]]; then
+            MODIFIED_URL="${ORIGINAL_URL//${PG_ORIGINAL_HOST}/127.0.0.1:${PG_PROXY_PORT}}"
+          fi
+          
+          echo "SUPABASE_DB_URL_PROXY=$MODIFIED_URL" >> "$GITHUB_ENV"
+          echo "Modified connection string to use local proxy"
+      
+      - name: Show resolved env
+        shell: bash
+        run: |
+          echo "PG_ORIGINAL_HOST=${PG_ORIGINAL_HOST:-<none>}"
+          echo "PG_PROXY_HOST=${PG_PROXY_HOST:-<none>}"
+          echo "PG_PROXY_PORT=${PG_PROXY_PORT:-<none>}"
           echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
           echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
+          echo "SOCAT_PID=${SOCAT_PID:-<none>}"
           echo ""
-          echo "/etc/hosts content:"
-          cat /etc/hosts | grep supabase || echo "No supabase entry found"
+          echo "Socat status:"
+          ps aux | grep socat | grep -v grep || echo "socat not running"
           echo ""
-          echo "Testing DNS resolution:"
-          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || echo "getent failed"
-          echo ""
-          if [ "${IP_VERSION:-}" = "6" ]; then
-            echo "Testing IPv6 network connectivity:"
-            ping6 -c 2 db.yunfbzwdftdnclmdcjhh.supabase.co || echo "ping6 failed"
-          else
-            echo "Testing IPv4 network connectivity:"
-            ping -c 2 db.yunfbzwdftdnclmdcjhh.supabase.co || echo "ping failed"
-          fi
-          echo ""
-          echo "Testing port 5432 connectivity:"
-          timeout 10 bash -c "</dev/tcp/${PG_HOST}/5432" && echo "Port 5432 is reachable" || echo "Port 5432 is not reachable"
+          echo "Testing local proxy port:"
+          netstat -tlnp 2>/dev/null | grep ${PG_PROXY_PORT} || echo "Port not listening"
       # ------------------------------
-      # Original Show resolved env (commented out as requested)
-      # ------------------------------
-      # - name: Show resolved env
-      #   shell: bash
-      #   run: |
-      #     echo "PG_SNI_HOST=${PG_SNI_HOST:-<none>}"
-      #     echo "PG_HOST=${PG_HOST:-<none>}"
-      #     echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
-      #     echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
-      #     echo ""
-      #     echo "/etc/hosts content:"
-      #     cat /etc/hosts | grep supabase || echo "No supabase entry found"
-      #     echo ""
-      #     echo "Testing DNS resolution:"
-      #     getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || echo "getent failed"
-      #     echo ""
-      #     echo "Testing network connectivity:"
-      #     ping6 -c 2 db.yunfbzwdftdnclmdcjhh.supabase.co || echo "ping6 failed"
-      # ------------------------------
-      # Block E – Install & check DB
+      # Block C – Install & check DB
       # ------------------------------
       - name: Install dependencies
         run: npm ci
+      
       - name: db:status
         working-directory: packages/ingest
         env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_PROXY }}
           NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
           SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
         run: npm run db:status
+      
+      - name: Cleanup socat
+        if: always()
+        shell: bash
+        run: |
+          if [ -n "${SOCAT_PID:-}" ]; then
+            echo "Stopping socat (PID: $SOCAT_PID)"
+            kill $SOCAT_PID || true
+          fi
+          echo "Socat logs:"
+          cat /tmp/socat.log || true
