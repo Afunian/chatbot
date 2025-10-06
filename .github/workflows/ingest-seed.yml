@@ -27,9 +27,9 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SSL_CA_PEM_PATH: C:\certs\supabase-root-2021.pem
-        run: npm run db:seed
+        run: node ./src/seed-smart.mjs
       - name: db:status
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SSL_CA_PEM_PATH: C:\certs\supabase-root-2021.pem
-        run: npm run db:status
+        run: node ./src/db-status.mjs
