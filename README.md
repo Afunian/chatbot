@@ -30,7 +30,9 @@ A simple Streamlit app that shows how to build a chatbot using OpenAI's GPT-3.5.
 git clone https://github.com/Afunian/chatbot.git
 cd chatbot\packages\ingest
 npm ci
-\\\### 2) Environment
+\\\
+
+### 2) Environment
 Copy the template and fill in real values:
 
 \\\powershell
