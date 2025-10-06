@@ -50,7 +50,7 @@ jobs:
             echo "No IPv4 available, using IPv6: $IP6"
             echo "$IP6 $H" | sudo tee -a /etc/hosts
             echo "PG_HOST=$IP6" >> "$GITHUB_ENV"
-            # Enable IPv6 (it should be enabled by default, but let's make sure)
+            # Ensure IPv6 is enabled
             sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
             sudo sysctl -w net.ipv6.conf.default.disable_ipv6=0
           else
@@ -66,4 +66,24 @@ jobs:
           echo "PG_HOST=${PG_HOST:-<none>}"
           echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
           echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
-          ech
+          echo ""
+          echo "/etc/hosts content:"
+          cat /etc/hosts | grep supabase || echo "No supabase entry found"
+          echo ""
+          echo "Testing DNS resolution:"
+          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co || echo "getent failed"
+          echo ""
+          echo "IPv6 status:"
+          cat /proc/sys/net/ipv6/conf/all/disable_ipv6
+      # ------------------------------
+      # Block C – Install & check DB
+      # ------------------------------
+      - name: Install dependencies
+        run: npm ci
+      - name: db:status
+        working-directory: packages/ingest
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
+          SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
+        run: npm run db:status
