@@ -17,9 +17,23 @@ if (!dsn) {
   console.error("❌ SUPABASE_DB_URL is not set. Put it in C:\\dentistrygpt\\.env or in GitHub Actions secret.");
   process.exit(1);
 }
-const urlObj  = new URL(dsn);
-// In CI we set PG_SNI_HOST to the real hostname when we swap the DSN host to IPv4.
+let urlObj;
+try {
+  urlObj = new URL(dsn);
+} catch (e) {
+  console.error("❌ Invalid SUPABASE_DB_URL:", e.message);
+  process.exit(1);
+}
+// Keep SNI on the real hostname even if we connect to an IPv4 address
 const sniHost = process.env.PG_SNI_HOST || urlObj.hostname;
+
+// If CI provides an IPv4 override, replace only the hostname in the DSN
+let effectiveDsn = dsn;
+if (process.env.PG_HOST_OVERRIDE) {
+  const u = new URL(dsn);
+  u.hostname = process.env.PG_HOST_OVERRIDE;
+  effectiveDsn = u.toString();
+}
 
 // --- CA file discovery (Linux CI + Windows local) ---
 const candidates = [
@@ -39,10 +53,10 @@ console.log(`[db] Using CA: ${caPath}`);
 console.log(`[db] TLS SNI: ${sniHost}`);
 
 export const db = new pg.Pool({
-  connectionString: dsn,
+  connectionString: effectiveDsn,
   ssl: {
     ca: caPem,
     rejectUnauthorized: true,
-    servername: sniHost,   // keep SNI on hostname even if DSN host is replaced with IPv4 in CI
+    servername: sniHost,   // validate cert against real hostname
   },
 });
