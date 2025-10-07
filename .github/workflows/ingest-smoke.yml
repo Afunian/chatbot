@@ -65,23 +65,32 @@ jobs:
           echo "PG_PROXY_HOST=127.0.0.1" >> "$GITHUB_ENV"
           echo "PG_PROXY_PORT=$LOCAL_PORT" >> "$GITHUB_ENV"
           echo "PG_ORIGINAL_HOST=$H" >> "$GITHUB_ENV"
+          
+          # Add hosts entry to ensure proper SNI
+          echo "127.0.0.1 $H" | sudo tee -a /etc/hosts
       
       - name: Modify connection string for proxy
         shell: bash
         run: |
           set -euo pipefail
           ORIGINAL_URL="${{ secrets.SUPABASE_DB_URL }}"
+          H="$PG_ORIGINAL_HOST"
           
-          # Replace hostname and port with proxy
-          MODIFIED_URL="${ORIGINAL_URL//${PG_ORIGINAL_HOST}:5432/127.0.0.1:${PG_PROXY_PORT}}"
+          # Replace the port in the connection string, but keep the hostname for SNI
+          # Pattern: postgres://user:pass@host:5432/db -> postgres://user:pass@host:15432/db
+          MODIFIED_URL="${ORIGINAL_URL//:5432/:${PG_PROXY_PORT}}"
           
-          # If no port was specified in original, add it
-          if [[ "$ORIGINAL_URL" != *":5432"* ]]; then
-            MODIFIED_URL="${ORIGINAL_URL//${PG_ORIGINAL_HOST}/127.0.0.1:${PG_PROXY_PORT}}"
+          # If no port was explicitly in the URL, add it after the hostname
+          if [[ "$ORIGINAL_URL" != *":5432"* ]] && [[ "$ORIGINAL_URL" == *"@$H/"* ]]; then
+            MODIFIED_URL="${ORIGINAL_URL//@$H\//@$H:${PG_PROXY_PORT}/}"
+          elif [[ "$ORIGINAL_URL" != *":5432"* ]] && [[ "$ORIGINAL_URL" == *"@$H?"* ]]; then
+            MODIFIED_URL="${ORIGINAL_URL//@$H?/@$H:${PG_PROXY_PORT}?}"
+          elif [[ "$ORIGINAL_URL" != *":"* ]] && [[ "$ORIGINAL_URL" == *"@$H"* ]]; then
+            MODIFIED_URL="${ORIGINAL_URL//@$H/@$H:${PG_PROXY_PORT}}"
           fi
           
           echo "SUPABASE_DB_URL_PROXY=$MODIFIED_URL" >> "$GITHUB_ENV"
-          echo "Modified connection string to use local proxy"
+          echo "Modified connection string to use local proxy on port ${PG_PROXY_PORT}"
       
       - name: Show resolved env
         shell: bash
@@ -93,11 +102,17 @@ jobs:
           echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
           echo "SOCAT_PID=${SOCAT_PID:-<none>}"
           echo ""
+          echo "/etc/hosts entries:"
+          cat /etc/hosts | grep supabase || echo "No supabase entry found"
+          echo ""
           echo "Socat status:"
           ps aux | grep socat | grep -v grep || echo "socat not running"
           echo ""
           echo "Testing local proxy port:"
-          netstat -tlnp 2>/dev/null | grep ${PG_PROXY_PORT} || echo "Port not listening"
+          ss -tlnp 2>/dev/null | grep ${PG_PROXY_PORT} || netstat -tlnp 2>/dev/null | grep ${PG_PROXY_PORT} || echo "Port not listening"
+          echo ""
+          echo "Testing DNS resolution:"
+          getent hosts db.yunfbzwdftdnclmdcjhh.supabase.co
       # ------------------------------
       # Block C – Install & check DB
       # ------------------------------
@@ -110,6 +125,7 @@ jobs:
           SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_PROXY }}
           NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
           SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
+          PGSSLMODE: require
         run: npm run db:status
       
       - name: Cleanup socat
