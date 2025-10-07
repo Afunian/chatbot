@@ -30,20 +30,24 @@ jobs:
         run: |
           set -euo pipefail
           
-          # Extract region from your database host
           DB_HOST="db.yunfbzwdftdnclmdcjhh.supabase.co"
           PROJECT_REF="yunfbzwdftdnclmdcjhh"
           
-          # Try different pooler endpoints (as separate variables, not array)
           echo "Trying connection pooler endpoints..."
-          FOUND_IPV4=false
+          FOUND_IPV4="false"
           
           # Try endpoint 1
           POOLER="aws-0-us-east-1.pooler.supabase.com"
           echo "Checking $POOLER..."
           IP4="$(dig +short A "$POOLER" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
-          if [ -n "${IP4:-}" ]; then
+          if [ -n "${IP4}" ]; then
             echo "✓ Found IPv4 for pooler $POOLER: $IP4"
             echo "USE_POOLER=true" >> "$GITHUB_ENV"
             echo "POOLER_HOST=$POOLER" >> "$GITHUB_ENV"
             echo "POOLER_IP=$IP4" >> "$GITHUB_ENV"
+            FOUND_IPV4="true"
+          fi
+          
+          # Try endpoint 2 if not found
+          if [ "$FOUND_IPV4" = "false" ]; then
+            POOLER="aws-0-us-west-1.pooler.supabase.com
