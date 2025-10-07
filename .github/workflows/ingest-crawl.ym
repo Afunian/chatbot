@@ -1,0 +1,35 @@
+name: Ingest Crawl (manual)
+on:
+  workflow_dispatch:
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Write CA file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/certs
+          echo "${{ secrets.SSL_CA_PEM }}" > /tmp/certs/supabase-root-2021.pem
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem"
+            echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
+          } >> "$GITHUB_ENV"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run crawler
+        working-directory: packages/ingest
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}   # pooler DSN
+          NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
+          SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
+          PGSSLMODE: require
+        run: npm run crawl
