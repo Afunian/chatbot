@@ -141,34 +141,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          
+
           ORIGINAL_URL="${{ secrets.SUPABASE_DB_URL }}"
-          
-          # Replace the port in connection string
+
           if [ "${USE_POOLER}" = "true" ]; then
-            # For pooler, we need to use port 6543 and add specific parameters
-            # Replace the direct database host with pooler host and port
-            MODIFIED_URL="${ORIGINAL_URL//db.yunfbzwdftdnclmdcjhh.supabase.co:5432/${POOLER_HOST}:6543}"
-            MODIFIED_URL="${MODIFIED_URL//db.yunfbzwdftdnclmdcjhh.supabase.co/${POOLER_HOST}:6543}"
-            
-            # For Supabase pooler in transaction mode, use these parameters
-            if [[ "$MODIFIED_URL" != *"?"* ]]; then
-              MODIFIED_URL="${MODIFIED_URL}?pgbouncer=true&connection_limit=1"
-            else
-              MODIFIED_URL="${MODIFIED_URL}&pgbouncer=true&connection_limit=1"
+            echo "Updating connection string to use pooler host/port..."
+            MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co:5432/${POOLER_HOST}:6543/")"
+            MODIFIED_URL="$(echo "$MODIFIED_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co/${POOLER_HOST}:6543/")"
+
+            # Append pooler parameters if missing
+            if [[ "$MODIFIED_URL" != *"pgbouncer=true"* ]]; then
+              if [[ "$MODIFIED_URL" == *"?"* ]]; then
+                MODIFIED_URL="${MODIFIED_URL}&pgbouncer=true&connection_limit=1"
+              else
+                MODIFIED_URL="${MODIFIED_URL}?pgbouncer=true&connection_limit=1"
+              fi
             fi
           else
-            # Replace port with proxy port
-            MODIFIED_URL="${ORIGINAL_URL//:5432/:${CONNECTION_PORT}}"
-            
-            # If no explicit port, add it
-            if [[ "$ORIGINAL_URL" != *":5432"* ]]; then
-              MODIFIED_URL="${ORIGINAL_URL//db.yunfbzwdftdnclmdcjhh.supabase.co/db.yunfbzwdftdnclmdcjhh.supabase.co:${CONNECTION_PORT}}"
-            fi
+            echo "Updating connection string to use local proxy port..."
+            MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/:5432/:${CONNECTION_PORT}/")"
           fi
-          
+
           echo "SUPABASE_DB_URL_MODIFIED=$MODIFIED_URL" >> "$GITHUB_ENV"
           echo "Connection string modified successfully"
+
       
       - name: Show configuration
         shell: bash
