@@ -1,17 +1,17 @@
 name: smoke
 on:
   workflow_dispatch:
+
 jobs:
   smoke:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      # ------------------------------
-      # Block A – Node + CA setup
-      # ------------------------------
+
       - name: Write CA file
         shell: bash
         run: |
@@ -22,229 +22,15 @@ jobs:
             echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem"
             echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
           } >> "$GITHUB_ENV"
-      # ------------------------------
-      # Block B – Try multiple connection strategies
-      # ------------------------------
-      - name: Try Supabase Connection Pooler
-        shell: bash
-        run: |
-          set -euo pipefail
-          
-          DB_HOST="db.yunfbzwdftdnclmdcjhh.supabase.co"
-          PROJECT_REF="yunfbzwdftdnclmdcjhh"
-          
-          echo "Trying connection pooler endpoints..."
-          FOUND_IPV4="false"
-          
-          # Try endpoint 1
-          POOLER="aws-0-us-east-1.pooler.supabase.com"
-          echo "Checking $POOLER..."
-          IP4="$(dig +short A "$POOLER" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
-          if [ -n "${IP4}" ]; then
-            echo "✓ Found IPv4 for pooler $POOLER: $IP4"
-            echo "USE_POOLER=true" >> "$GITHUB_ENV"
-            echo "POOLER_HOST=$POOLER" >> "$GITHUB_ENV"
-            echo "POOLER_IP=$IP4" >> "$GITHUB_ENV"
-            FOUND_IPV4="true"
-          fi
-          
-          # Try endpoint 2 if not found
-          if [ "$FOUND_IPV4" = "false" ]; then
-            POOLER="aws-0-us-west-1.pooler.supabase.com"
-            echo "Checking $POOLER..."
-            IP4="$(dig +short A "$POOLER" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
-            if [ -n "${IP4}" ]; then
-              echo "✓ Found IPv4 for pooler $POOLER: $IP4"
-              echo "USE_POOLER=true" >> "$GITHUB_ENV"
-              echo "POOLER_HOST=$POOLER" >> "$GITHUB_ENV"
-              echo "POOLER_IP=$IP4" >> "$GITHUB_ENV"
-              FOUND_IPV4="true"
-            fi
-          fi
-          
-          # Try endpoint 3 if not found
-          if [ "$FOUND_IPV4" = "false" ]; then
-            POOLER="${PROJECT_REF}.pooler.supabase.com"
-            echo "Checking $POOLER..."
-            IP4="$(dig +short A "$POOLER" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
-            if [ -n "${IP4}" ]; then
-              echo "✓ Found IPv4 for pooler $POOLER: $IP4"
-              echo "USE_POOLER=true" >> "$GITHUB_ENV"
-              echo "POOLER_HOST=$POOLER" >> "$GITHUB_ENV"
-              echo "POOLER_IP=$IP4" >> "$GITHUB_ENV"
-              FOUND_IPV4="true"
-            fi
-          fi
-          
-          if [ "$FOUND_IPV4" = "false" ]; then
-            echo "No pooler with IPv4 found, will try proxy approach..."
-            echo "USE_POOLER=false" >> "$GITHUB_ENV"
-          fi
-      
-      - name: Setup fallback strategies
-        shell: bash
-        run: |
-          set -euo pipefail
-          
-          DB_HOST="db.yunfbzwdftdnclmdcjhh.supabase.co"
-          
-          if [ "${USE_POOLER}" = "true" ]; then
-            echo "Strategy: Using connection pooler"
-            echo "$POOLER_IP $POOLER_HOST" | sudo tee -a /etc/hosts
-            echo "CONNECTION_HOST=$POOLER_HOST" >> "$GITHUB_ENV"
-            echo "CONNECTION_PORT=6543" >> "$GITHUB_ENV"
-            echo "USE_TRANSACTION_MODE=true" >> "$GITHUB_ENV"
-          else
-            echo "Strategy: Using socat proxy for IPv6"
-            
-            # Get IPv6 address
-            IP6="$(dig +short AAAA "$DB_HOST" @8.8.8.8 | grep -E '^[0-9a-f:]+$' | head -n1 || true)"
-            
-            if [ -z "${IP6}" ]; then
-              echo "ERROR: No IPv6 address found"
-              exit 1
-            fi
-            
-            echo "Found IPv6: $IP6"
-            
-            # Install socat
-            sudo apt-get update && sudo apt-get install -y socat
-            
-            # Start socat proxy
-            LOCAL_PORT=15432
-            echo "Starting socat proxy: 127.0.0.1:$LOCAL_PORT -> [$IP6]:5432"
-            nohup socat -d -d TCP4-LISTEN:$LOCAL_PORT,reuseaddr,fork TCP6:[$IP6]:5432 > /tmp/socat.log 2>&1 &
-            SOCAT_PID=$!
-            echo "SOCAT_PID=$SOCAT_PID" >> "$GITHUB_ENV"
-            
-            # Wait for socat to start
-            sleep 3
-            
-            # Verify socat is running
-            if ! ps -p $SOCAT_PID > /dev/null; then
-              echo "ERROR: socat failed to start"
-              cat /tmp/socat.log
-              exit 1
-            fi
-            
-            echo "Socat started successfully (PID: $SOCAT_PID)"
-            
-            # Map the hostname to localhost for SNI to work
-            echo "127.0.0.1 $DB_HOST" | sudo tee -a /etc/hosts
-            
-            echo "CONNECTION_HOST=$DB_HOST" >> "$GITHUB_ENV"
-            echo "CONNECTION_PORT=$LOCAL_PORT" >> "$GITHUB_ENV"
-            echo "USE_TRANSACTION_MODE=false" >> "$GITHUB_ENV"
-          fi
-      
-      - name: Modify connection string
-        shell: bash
-        run: |
-          set -euo pipefail
 
-          ORIGINAL_URL="${{ secrets.SUPABASE_DB_URL }}"
-
-          add_query_param () {
-            # $1 = url, $2 = key=value (already URL-encoded if needed)
-            if [[ "$1" == *"?"* ]]; then
-              printf "%s&%s" "$1" "$2"
-            else
-              printf "%s?%s" "$1" "$2"
-            fi
-          }
-
-          if [ "${USE_POOLER}" = "true" ]; then
-            echo "Updating connection string to use pooler host/port..."
-            # swap host:port to pooler:6543 (cover with/without explicit :5432)
-            MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co:5432/${POOLER_HOST}:6543/")"
-            MODIFIED_URL="$(echo "$MODIFIED_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co/${POOLER_HOST}:6543/")"
-
-            # Always enable pgbouncer (transaction mode)
-            if [[ "$MODIFIED_URL" != *"pgbouncer=true"* ]]; then
-              MODIFIED_URL="$(add_query_param "$MODIFIED_URL" "pgbouncer=true")"
-            fi
-            # A tiny pool of 1 connection per client is typical for txn poolers
-            if [[ "$MODIFIED_URL" != *"connection_limit="* ]]; then
-              MODIFIED_URL="$(add_query_param "$MODIFIED_URL" "connection_limit=1")"
-            fi
-
-            # IMPORTANT: If we are using a **regional** pooler (aws-0-...), we must
-            # include the tenant routing hint: options=project%3D<PROJECT_REF>
-            if [[ "$POOLER_HOST" == aws-*.*.pooler.supabase.com ]]; then
-              if [[ "$MODIFIED_URL" != *"options=project%3D${PROJECT_REF}"* ]]; then
-                MODIFIED_URL="$(add_query_param "$MODIFIED_URL" "options=project%3D${PROJECT_REF}")"
-              fi
-            fi
-          else
-            echo "Updating connection string to use local proxy port..."
-            MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/:5432/:${CONNECTION_PORT}/")"
-            # If no explicit port was present, add it to the host
-            if [[ "$ORIGINAL_URL" != *":5432"* ]]; then
-              MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co/db.yunfbzwdftdnclmdcjhh.supabase.co:${CONNECTION_PORT}/")"
-            fi
-          fi
-
-          echo "SUPABASE_DB_URL_MODIFIED=$MODIFIED_URL" >> "$GITHUB_ENV"
-          echo "Connection string modified successfully"
-
-      - name: Show configuration
-        shell: bash
-        run: |
-          echo "=== Connection Strategy ==="
-          echo "USE_POOLER: ${USE_POOLER}"
-          echo "CONNECTION_HOST: ${CONNECTION_HOST}"
-          echo "CONNECTION_PORT: ${CONNECTION_PORT}"
-          echo "USE_TRANSACTION_MODE: ${USE_TRANSACTION_MODE}"
-          echo "NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS}"
-          echo "SSL_CA_PEM_PATH: ${SSL_CA_PEM_PATH}"
-          
-          if [ "${USE_POOLER}" = "false" ]; then
-            echo "SOCAT_PID: ${SOCAT_PID:-<none>}"
-            echo ""
-            echo "=== Socat Process ==="
-            ps aux | grep socat | grep -v grep || echo "socat not found"
-            echo ""
-            echo "=== Socat Logs ==="
-            head -20 /tmp/socat.log || echo "No logs yet"
-          fi
-          
-          echo ""
-          echo "=== /etc/hosts ==="
-          cat /etc/hosts | grep -E "(supabase|pooler)" || echo "No custom entries"
-          
-          echo ""
-          echo "=== Network Test ==="
-          PORT="${CONNECTION_PORT}"
-          timeout 5 nc -zv 127.0.0.1 "$PORT" 2>&1 || echo "Connection test failed"
-          
-          echo ""
-          echo "=== Connection String Format (sanitized) ==="
-          SANITIZED="${SUPABASE_DB_URL_MODIFIED}"
-          echo "$SANITIZED" | sed 's/:[^:@]*@/:***@/g'
-      
-      # ------------------------------
-      # Block C – Install & check DB
-      # ------------------------------
       - name: Install dependencies
         run: npm ci
-      
+
       - name: db:status
         working-directory: packages/ingest
         env:
-          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_MODIFIED }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
           SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
           PGSSLMODE: require
         run: npm run db:status
-      
-      - name: Cleanup
-        if: always()
-        shell: bash
-        run: |
-          if [ -n "${SOCAT_PID:-}" ]; then
-            echo "Stopping socat (PID: $SOCAT_PID)"
-            kill $SOCAT_PID 2>/dev/null || true
-            echo ""
-            echo "=== Final Socat Logs ==="
-            cat /tmp/socat.log || true
-          fi
