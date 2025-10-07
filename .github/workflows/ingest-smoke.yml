@@ -137,33 +137,55 @@ jobs:
             echo "USE_TRANSACTION_MODE=false" >> "$GITHUB_ENV"
           fi
       
-      - name: Modify connection string
-        shell: bash
-        run: |
-          set -euo pipefail
+- name: Modify connection string
+  shell: bash
+  run: |
+    set -euo pipefail
 
-          ORIGINAL_URL="${{ secrets.SUPABASE_DB_URL }}"
+    ORIGINAL_URL="${{ secrets.SUPABASE_DB_URL }}"
 
-          if [ "${USE_POOLER}" = "true" ]; then
-            echo "Updating connection string to use pooler host/port..."
-            MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co:5432/${POOLER_HOST}:6543/")"
-            MODIFIED_URL="$(echo "$MODIFIED_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co/${POOLER_HOST}:6543/")"
+    add_query_param () {
+      # $1 = url, $2 = key=value (already URL-encoded if needed)
+      if [[ "$1" == *"?"* ]]; then
+        printf "%s&%s" "$1" "$2"
+      else
+        printf "%s?%s" "$1" "$2"
+      fi
+    }
 
-            # Append pooler parameters if missing
-            if [[ "$MODIFIED_URL" != *"pgbouncer=true"* ]]; then
-              if [[ "$MODIFIED_URL" == *"?"* ]]; then
-                MODIFIED_URL="${MODIFIED_URL}&pgbouncer=true&connection_limit=1"
-              else
-                MODIFIED_URL="${MODIFIED_URL}?pgbouncer=true&connection_limit=1"
-              fi
-            fi
-          else
-            echo "Updating connection string to use local proxy port..."
-            MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/:5432/:${CONNECTION_PORT}/")"
-          fi
+    if [ "${USE_POOLER}" = "true" ]; then
+      echo "Updating connection string to use pooler host/port..."
+      # swap host:port to pooler:6543 (cover with/without explicit :5432)
+      MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co:5432/${POOLER_HOST}:6543/")"
+      MODIFIED_URL="$(echo "$MODIFIED_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co/${POOLER_HOST}:6543/")"
 
-          echo "SUPABASE_DB_URL_MODIFIED=$MODIFIED_URL" >> "$GITHUB_ENV"
-          echo "Connection string modified successfully"
+      # Always enable pgbouncer (transaction mode)
+      if [[ "$MODIFIED_URL" != *"pgbouncer=true"* ]]; then
+        MODIFIED_URL="$(add_query_param "$MODIFIED_URL" "pgbouncer=true")"
+      fi
+      # A tiny pool of 1 connection per client is typical for txn poolers
+      if [[ "$MODIFIED_URL" != *"connection_limit="* ]]; then
+        MODIFIED_URL="$(add_query_param "$MODIFIED_URL" "connection_limit=1")"
+      fi
+
+      # IMPORTANT: If we are using a **regional** pooler (aws-0-...), we must
+      # include the tenant routing hint: options=project%3D<PROJECT_REF>
+      if [[ "$POOLER_HOST" == aws-*.*.pooler.supabase.com ]]; then
+        if [[ "$MODIFIED_URL" != *"options=project%3D${PROJECT_REF}"* ]]; then
+          MODIFIED_URL="$(add_query_param "$MODIFIED_URL" "options=project%3D${PROJECT_REF}")"
+        fi
+      fi
+    else
+      echo "Updating connection string to use local proxy port..."
+      MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/:5432/:${CONNECTION_PORT}/")"
+      # If no explicit port was present, add it to the host
+      if [[ "$ORIGINAL_URL" != *":5432"* ]]; then
+        MODIFIED_URL="$(echo "$ORIGINAL_URL" | sed "s/db\.yunfbzwdftdnclmdcjhh\.supabase\.co/db.yunfbzwdftdnclmdcjhh.supabase.co:${CONNECTION_PORT}/")"
+      fi
+    fi
+
+    echo "SUPABASE_DB_URL_MODIFIED=$MODIFIED_URL" >> "$GITHUB_ENV"
+    echo "Connection string modified successfully"
 
       
       - name: Show configuration
