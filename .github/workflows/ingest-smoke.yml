@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Try newer Ubuntu with potentially better IPv6 support
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,82 +23,36 @@ jobs:
             echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
           } >> "$GITHUB_ENV"
       # ------------------------------
-      # Block B – Try using NAT64/DNS64 or custom resolver
+      # Block B – Try multiple connection strategies
       # ------------------------------
-      - name: Setup DNS64 for IPv6-to-IPv4 translation
+      - name: Try Supabase Connection Pooler
         shell: bash
         run: |
           set -euo pipefail
-          H="db.yunfbzwdftdnclmdcjhh.supabase.co"
           
-          # Try Google's DNS64 service (2001:4860:4860::6464)
-          echo "Attempting DNS64 resolution..."
-          IP6_DNS64="$(dig +short AAAA "$H" @2001:4860:4860::6464 | grep -E '^64:ff9b::' | head -n1 || true)"
+          # Extract region from your database host
+          DB_HOST="db.yunfbzwdftdnclmdcjhh.supabase.co"
+          PROJECT_REF="yunfbzwdftdnclmdcjhh"
           
-          if [ -n "${IP6_DNS64:-}" ]; then
-            echo "Found DNS64 address: $IP6_DNS64"
-            echo "PG_HOST=$IP6_DNS64" >> "$GITHUB_ENV"
-            echo "PG_ORIGINAL_HOST=$H" >> "$GITHUB_ENV"
-          else
-            echo "DNS64 not available, trying direct IPv6..."
-            IP6="$(dig +short AAAA "$H" @8.8.8.8 | grep -E '^[0-9a-f:]+$' | head -n1 || true)"
-            if [ -n "${IP6:-}" ]; then
-              echo "Found IPv6: $IP6"
-              echo "PG_HOST=$IP6" >> "$GITHUB_ENV"
-              echo "PG_ORIGINAL_HOST=$H" >> "$GITHUB_ENV"
-            else
-              echo "ERROR: No IP address found"
-              exit 1
+          # Try different pooler endpoints
+          POOLER_ENDPOINTS=(
+            "aws-0-us-east-1.pooler.supabase.com"
+            "aws-0-us-west-1.pooler.supabase.com"
+            "${PROJECT_REF}.pooler.supabase.com"
+          )
+          
+          echo "Trying connection pooler endpoints..."
+          FOUND_IPV4=false
+          
+          for POOLER in "${POOLER_ENDPOINTS[@]}"; do
+            echo "Checking $POOLER..."
+            IP4="$(dig +short A "$POOLER" @8.8.8.8 | grep -E '^[0-9.]+$' | head -n1 || true)"
+            
+            if [ -n "${IP4:-}" ]; then
+              echo "✓ Found IPv4 for pooler $POOLER: $IP4"
+              echo "USE_POOLER=true" >> "$GITHUB_ENV"
+              echo "POOLER_HOST=$POOLER" >> "$GITHUB_ENV"
+              echo "POOLER_IP=$IP4" >> "$GITHUB_ENV"
+              FOUND_IPV4=true
+              break
             fi
-          fi
-          
-      - name: Test basic IPv6 connectivity
-        shell: bash
-        continue-on-error: true
-        run: |
-          echo "Testing IPv6 connectivity..."
-          echo "IPv6 status:"
-          cat /proc/sys/net/ipv6/conf/all/disable_ipv6
-          echo ""
-          echo "IPv6 routes:"
-          ip -6 route || true
-          echo ""
-          echo "Testing connection to Supabase IPv6..."
-          timeout 5 bash -c "echo > /dev/tcp/${PG_HOST}/5432" 2>&1 || echo "Direct connection failed"
-      
-      - name: Show resolved env
-        shell: bash
-        run: |
-          echo "PG_ORIGINAL_HOST=${PG_ORIGINAL_HOST:-<none>}"
-          echo "PG_HOST=${PG_HOST:-<none>}"
-          echo "NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS:-<none>}"
-          echo "SSL_CA_PEM_PATH=${SSL_CA_PEM_PATH:-<none>}"
-      
-      # ------------------------------
-      # Block C – Install & check DB
-      # ------------------------------
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Test with psql (if available)
-        shell: bash
-        continue-on-error: true
-        run: |
-          # Install postgresql-client
-          sudo apt-get update && sudo apt-get install -y postgresql-client
-          
-          # Extract connection details (this is a simplified approach)
-          echo "Testing direct psql connection..."
-          
-          # Try to connect with psql using the full connection string
-          psql "${{ secrets.SUPABASE_DB_URL }}" -c "SELECT version();" || echo "psql connection failed"
-      
-      - name: db:status
-        working-directory: packages/ingest
-        env:
-          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-          NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
-          SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
-          PGSSLMODE: require
-          NODE_OPTIONS: "--trace-warnings"
-        run: npm run db:status
