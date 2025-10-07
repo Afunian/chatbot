@@ -6,5 +6,31 @@ jobs:
   seed:
     runs-on: ubuntu-latest
     steps:
-      - name: Hello
-        run: echo "seed workflow parsed OK"
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Write CA file
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/certs
+          echo "${{ secrets.SSL_CA_PEM }}" > /tmp/certs/supabase-root-2021.pem
+          {
+            echo "NODE_EXTRA_CA_CERTS=/tmp/certs/supabase-root-2021.pem"
+            echo "SSL_CA_PEM_PATH=/tmp/certs/supabase-root-2021.pem"
+          } >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: db:seed
+        working-directory: packages/ingest
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
+          SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
+          PGSSLMODE: require
+        run: npm run db:seed
