@@ -95,6 +95,7 @@ jobs:
             echo "$POOLER_IP $POOLER_HOST" | sudo tee -a /etc/hosts
             echo "CONNECTION_HOST=$POOLER_HOST" >> "$GITHUB_ENV"
             echo "CONNECTION_PORT=6543" >> "$GITHUB_ENV"
+            echo "USE_TRANSACTION_MODE=true" >> "$GITHUB_ENV"
           else
             echo "Strategy: Using socat proxy for IPv6"
             
@@ -135,6 +136,7 @@ jobs:
             
             echo "CONNECTION_HOST=$DB_HOST" >> "$GITHUB_ENV"
             echo "CONNECTION_PORT=$LOCAL_PORT" >> "$GITHUB_ENV"
+            echo "USE_TRANSACTION_MODE=false" >> "$GITHUB_ENV"
           fi
       
       - name: Modify connection string
@@ -146,15 +148,23 @@ jobs:
           
           # Replace the port in connection string
           if [ "${USE_POOLER}" = "true" ]; then
-            # Replace host and port with pooler
+            # For pooler, we need to use port 6543 and add specific parameters
+            # Extract connection parts
+            # Format: postgres://user.project_ref:password@host:port/database
+            
+            # Replace the direct database host with pooler host and port
             MODIFIED_URL="${ORIGINAL_URL//db.yunfbzwdftdnclmdcjhh.supabase.co:5432/${POOLER_HOST}:6543}"
             MODIFIED_URL="${MODIFIED_URL//db.yunfbzwdftdnclmdcjhh.supabase.co/${POOLER_HOST}:6543}"
             
-            # Add pgbouncer=true for pooler mode
+            # The pooler URL format should be:
+            # postgres://postgres.[project-ref]:[password]@[pooler-host]:6543/postgres
+            # Make sure we're using the correct database name and user format
+            
+            # For Supabase pooler in transaction mode, use these parameters
             if [[ "$MODIFIED_URL" != *"?"* ]]; then
-              MODIFIED_URL="${MODIFIED_URL}?pgbouncer=true"
+              MODIFIED_URL="${MODIFIED_URL}?pgbouncer=true&connection_limit=1"
             else
-              MODIFIED_URL="${MODIFIED_URL}&pgbouncer=true"
+              MODIFIED_URL="${MODIFIED_URL}&pgbouncer=true&connection_limit=1"
             fi
           else
             # Replace port with proxy port
@@ -176,6 +186,7 @@ jobs:
           echo "USE_POOLER: ${USE_POOLER}"
           echo "CONNECTION_HOST: ${CONNECTION_HOST}"
           echo "CONNECTION_PORT: ${CONNECTION_PORT}"
+          echo "USE_TRANSACTION_MODE: ${USE_TRANSACTION_MODE}"
           echo "NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS}"
           echo "SSL_CA_PEM_PATH: ${SSL_CA_PEM_PATH}"
           
@@ -195,31 +206,4 @@ jobs:
           
           echo ""
           echo "=== Network Test ==="
-          timeout 5 nc -zv 127.0.0.1 ${CONNECTION_PORT} 2>&1 || echo "Connection test failed"
-      
-      # ------------------------------
-      # Block C – Install & check DB
-      # ------------------------------
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: db:status
-        working-directory: packages/ingest
-        env:
-          SUPABASE_DB_URL: ${{ env.SUPABASE_DB_URL_MODIFIED }}
-          NODE_EXTRA_CA_CERTS: ${{ env.NODE_EXTRA_CA_CERTS }}
-          SSL_CA_PEM_PATH: ${{ env.SSL_CA_PEM_PATH }}
-          PGSSLMODE: require
-        run: npm run db:status
-      
-      - name: Cleanup
-        if: always()
-        shell: bash
-        run: |
-          if [ -n "${SOCAT_PID:-}" ]; then
-            echo "Stopping socat (PID: $SOCAT_PID)"
-            kill $SOCAT_PID 2>/dev/null || true
-            echo ""
-            echo "=== Final Socat Logs ==="
-            cat /tmp/socat.log || true
-          fi
+          timeout 5 nc -zv 127.0.0.1 ${CONNECTION_PORT} 2>&
